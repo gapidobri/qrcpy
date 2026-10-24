@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>qrcpy</title>
+  <meta name="description" content="Share text and files between your devices, directly.">
+  <meta name="theme-color" content="#2B44FF">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,300..800&display=swap">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body class="landing">
+  <main class="stage">
+    <section class="tray" id="tray" aria-label="This device's session">
+      <header class="tray-head">
+        <span class="wordmark">qrcpy</span>
+        <ul class="peers" id="peers" aria-label="Devices in this session"></ul>
+        <button class="btn btn-line leave" id="leave" type="button">Leave</button>
+      </header>
+
+      <div class="invite" id="invite">
+        <p class="invite-hint" id="inviteHint">Scan this with your phone, or type the digits on another device.</p>
+        <div class="invite-row">
+          <div class="code" aria-live="polite">
+            <span class="code-digits" id="codeDigits" aria-label="Join code">000 000</span>
+            <span class="code-timer" aria-hidden="true"><span class="code-bar" id="codeBar"></span></span>
+            <span class="code-note" id="codeNote">Changes every minute. Works once.</span>
+          </div>
+          <div class="qr">
+            <img id="qr" alt="QR code that opens this session on another device" width="200" height="200">
+          </div>
+        </div>
+      </div>
+
+      <form class="composer" id="composer">
+        <label class="sr-only" for="input">Text to share</label>
+        <textarea id="input" rows="3" placeholder="Type or paste here to start sharing. Files can be dropped anywhere." autocomplete="off" spellcheck="false"></textarea>
+        <div class="composer-actions">
+          <label class="btn btn-line" for="files">Attach files</label>
+          <input type="file" id="files" multiple class="sr-only">
+          <span class="composer-tip" id="composerTip">Enter adds it, Shift+Enter starts a new line</span>
+          <button class="btn btn-signal" id="send" type="submit">Add</button>
+        </div>
+      </form>
+
+      <div class="board" id="board">
+        <p class="empty" id="empty"></p>
+        <div class="cards" id="cards"></div>
+      </div>
+    </section>
+
+    <section class="join" id="join" aria-labelledby="joinTitle">
+      <div class="join-inner">
+        <h2 id="joinTitle">Joining from here?</h2>
+        <p class="join-lede">Enter the six digits shown on your other device.</p>
+        <form id="joinForm" class="otp" autocomplete="off">
+          <input id="joinInput" class="otp-input" inputmode="numeric" pattern="[0-9]*" maxlength="6"
+                 autocomplete="one-time-code" aria-label="Six digit code" aria-describedby="joinStatus">
+          <div class="otp-cells" aria-hidden="true">
+            <span></span><span></span><span></span><span></span><span></span><span></span>
+          </div>
+        </form>
+        <p class="join-status" id="joinStatus" role="status"></p>
+      </div>
+    </section>
+  </main>
+
+  <div class="dropzone" aria-hidden="true"><span>Drop to share</span></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <template id="tplText">
+    <article class="card card-text">
+      <header class="card-head">
+        <span class="who"></span><time class="when"></time>
+        <span class="card-tools">
+          <button type="button" class="tool" data-act="remove">Remove</button>
+        </span>
+      </header>
+      <div class="text-body"></div>
+      <footer class="text-foot">
+        <button type="button" class="more" data-act="more">Show all</button>
+        <button type="button" class="btn btn-ink copy" data-act="copy">Copy</button>
+      </footer>
+    </article>
+  </template>
+
+  <template id="tplFile">
+    <article class="card card-file">
+      <div class="file-face"><span class="file-ext"></span></div>
+      <header class="card-head">
+        <span class="who"></span><time class="when"></time>
+        <span class="card-tools">
+          <button type="button" class="tool" data-act="remove">Remove</button>
+        </span>
+      </header>
+      <div class="file-meta">
+        <div class="file-id">
+          <span class="file-name"></span>
+          <span class="file-size"></span>
+        </div>
+        <button type="button" class="dl-cancel" data-act="cancel" aria-label="Cancel download">
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+        <button type="button" class="btn btn-ink dl" data-act="download">
+          <span class="dl-label">Download</span>
+          <svg class="dl-x" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="progress" hidden><span></span></div>
+    </article>
+  </template>
+</body>
+</html>

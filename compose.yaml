@@ -1,0 +1,20 @@
+services:
+  qrcpy:
+    image: ghcr.io/gapidobri/qrcpy:latest
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      # The address your other devices use to reach this machine. QR codes
+      # point here, so set it when you open the app via localhost.
+      QRCPY_PUBLIC_URL: ${QRCPY_PUBLIC_URL:-}
+      # Optional TURN relay for devices on networks that block direct connections.
+      QRCPY_TURN: ${QRCPY_TURN:-}
+      QRCPY_TURN_USER: ${QRCPY_TURN_USER:-}
+      QRCPY_TURN_PASS: ${QRCPY_TURN_PASS:-}
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
