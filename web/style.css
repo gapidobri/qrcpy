@@ -478,18 +478,21 @@ body.session .join { display: none; }
 body.dragging .dropzone { display: grid; }
 
 .toast {
-  position: fixed; left: 50%; bottom: max(24px, env(safe-area-inset-bottom));
+  /* Spans the screen minus a 16px gutter, shrinking to fit short messages. */
+  position: fixed; left: 16px; right: 16px; bottom: max(24px, env(safe-area-inset-bottom));
   z-index: 11;
-  transform: translate(-50%, 20px);
+  width: fit-content; max-width: 560px;
+  margin-inline: auto;
+  transform: translateY(20px);
   padding: 12px 20px;
-  border-radius: 999px;
+  border-radius: 22px;
   background: #14183A; color: #fff;
-  font-weight: 600; font-size: .95rem;
+  font-weight: 600; font-size: .95rem; line-height: 1.35;
+  text-align: center; text-wrap: balance;
   opacity: 0; pointer-events: none;
   transition: opacity .2s, transform .2s var(--ease);
-  max-width: calc(100vw - 32px);
 }
-.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast.show { opacity: 1; transform: none; }
 
 /* ---------- Landing → session morph (View Transitions) ---------- */
 ::view-transition-group(*) { animation-duration: .55s; animation-timing-function: var(--ease); }

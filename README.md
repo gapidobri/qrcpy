@@ -20,6 +20,9 @@ Set `QRCPY_PUBLIC_URL` to the address your other devices use to reach this
 machine. QR codes point there. Inside a container the server can't see your
 network address by itself.
 
+For a public server, use [`deploy/`](deploy/) instead, described under
+[Deploying to a server](#deploying-to-a-server).
+
 Without Docker:
 
 ```sh
@@ -41,8 +44,7 @@ unprivileged user and checks its own health with `qrcpy -healthcheck`.
 - **Codes:** each code belongs to a single browser and is replaced every 60
   seconds (`-code-ttl`). A replaced code keeps working for 15 more seconds, so
   someone halfway through typing it isn't turned away. A code stops working as
-  soon as someone joins with it. A wrong guess counts against the guesser's IP:
-  after 10 misses it is locked out for 10 minutes.
+  soon as someone joins with it. Wrong guesses aren't rate limited.
 - **QR codes** open `/#j=<code>`, which joins the session right away. The code
   is in the URL fragment, so it never reaches the server's logs.
 - **Files:** only their name and size are shared up front. The bytes are sent
@@ -74,11 +76,43 @@ name in capitals with `_` for `-`, e.g. `QRCPY_PUBLIC_URL`.
 | `-public-url` | | address other devices use to reach the server, put in QR codes |
 | `-code-ttl` | `60s` | how often a join code is replaced |
 | `-stun` | Google's public STUN server | STUN URL, empty to disable |
-| `-turn`, `-turn-user`, `-turn-pass` | | optional TURN relay, for networks where direct connections fail |
-| `-behind-proxy` | `false` | use `X-Forwarded-For` for rate limiting |
+| `-turn` | | TURN server URLs, comma-separated, for networks where direct connections fail |
+| `-turn-secret` | | secret shared with coturn (`use-auth-secret`); each browser gets its own expiring login |
+| `-turn-ttl` | `24h` | how long a login from `-turn-secret` lasts |
+| `-turn-user`, `-turn-pass` | | a fixed TURN login instead; every visitor can see it |
 | `-healthcheck` | | check that the server on `-addr` responds, then exit |
 
 Devices on the same Wi-Fi connect directly. Across different networks (for
-example, a phone on mobile data) some NATs block direct connections; add a TURN
-server for those. The relay forwards encrypted traffic and can't read it.
-Serve over HTTPS for anything beyond your LAN.
+example, a phone on mobile data) some NATs block direct connections; a TURN
+server relays those. The relay forwards encrypted traffic and can't read it.
+
+## Deploying to a server
+
+[`deploy/`](deploy/) runs qrcpy on a public server with:
+
+- **Caddy** in front, which gets HTTPS certificates automatically. qrcpy itself
+  has no open ports.
+- **coturn** as the TURN relay. qrcpy gives each browser its own login that
+  expires, so the relay can't be borrowed by others. It only relays to public
+  addresses, never into the server's own networks, and caps bandwidth per
+  connection.
+
+On a server with a public IP and Docker:
+
+```sh
+cd deploy
+cp .env.example .env    # set DOMAIN, and TURN_SECRET from: openssl rand -hex 32
+docker compose up -d
+```
+
+Point the domain's DNS at the server and open these ports in its firewall:
+
+| Port | For |
+|---|---|
+| 80, 443 TCP and 443 UDP | the website (Caddy) |
+| 3478 UDP and TCP | TURN |
+| 49160–49200 UDP | TURN relay traffic |
+
+The image on GHCR is private until you make the package public. Otherwise run
+`docker login ghcr.io` on the server first. Set `QRCPY_TAG=sha-…` in `.env`
+to pin a specific build.

@@ -5,8 +5,11 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha1"
 	"embed"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -36,10 +39,11 @@ var (
 	addr        = flag.String("addr", ":8080", "listen address")
 	codeTTL     = flag.Duration("code-ttl", 60*time.Second, "how long a join code stays valid")
 	stunURL     = flag.String("stun", "stun:stun.l.google.com:19302", "STUN server URL (empty to disable)")
-	turnURL     = flag.String("turn", "", "optional TURN server URL, e.g. turn:turn.example.com:3478")
-	turnUser    = flag.String("turn-user", "", "TURN username")
-	turnPass    = flag.String("turn-pass", "", "TURN credential")
-	behindProxy = flag.Bool("behind-proxy", false, "trust X-Forwarded-For for rate limiting")
+	turnURL     = flag.String("turn", "", "optional TURN server URLs, comma-separated, e.g. turn:turn.example.com:3478")
+	turnUser    = flag.String("turn-user", "", "static TURN username (prefer -turn-secret)")
+	turnPass    = flag.String("turn-pass", "", "static TURN credential (prefer -turn-secret)")
+	turnSecret  = flag.String("turn-secret", "", "shared secret with the TURN server (coturn use-auth-secret); each browser gets its own expiring login")
+	turnTTL     = flag.Duration("turn-ttl", 24*time.Hour, "how long a TURN login from -turn-secret lasts")
 	publicURL   = flag.String("public-url", "", "address other devices use to reach this server, put in QR codes (e.g. http://192.168.1.20:8080)")
 	healthcheck = flag.Bool("healthcheck", false, "check that a server on -addr responds, then exit")
 )
@@ -52,12 +56,10 @@ var inContainer = func() bool {
 }()
 
 const (
-	maxFailures   = 10
-	failureWindow = 10 * time.Minute
-	writeWait     = 10 * time.Second
-	pongWait      = 60 * time.Second
-	pingEvery     = 25 * time.Second
-	maxMsgSize    = 64 << 10
+	writeWait  = 10 * time.Second
+	pongWait   = 60 * time.Second
+	pingEvery  = 25 * time.Second
+	maxMsgSize = 64 << 10
 	// codeGrace keeps a code working briefly after it is replaced on schedule,
 	// so someone halfway through typing it isn't turned away.
 	codeGrace = 15 * time.Second
@@ -68,7 +70,6 @@ var idPattern = regexp.MustCompile(`^[a-f0-9]{16,64}$`)
 type client struct {
 	id     string
 	name   string
-	ip     string
 	conn   *websocket.Conn
 	send   chan []byte
 	room   *room
@@ -85,24 +86,45 @@ type room struct {
 	members  map[string]*client
 }
 
-type failWindow struct {
-	count int
-	start time.Time
-}
-
 type hub struct {
 	mu      sync.Mutex
 	rooms   map[string]*room
 	codes   map[string]*room
 	clients map[string]*client
-	fails   map[string]*failWindow
-	ice     []iceServer
 }
 
 type iceServer struct {
 	URLs       []string `json:"urls"`
 	Username   string   `json:"username,omitempty"`
 	Credential string   `json:"credential,omitempty"`
+}
+
+// iceFor returns the STUN and TURN servers for one browser. With -turn-secret
+// the TURN login is made for that browser and expires, using the scheme
+// coturn's use-auth-secret checks: username "<expiry>:<id>", password
+// base64(HMAC-SHA1(secret, username)).
+func iceFor(id string) []iceServer {
+	ice := []iceServer{}
+	if *stunURL != "" {
+		ice = append(ice, iceServer{URLs: []string{*stunURL}})
+	}
+	var urls []string
+	for _, u := range strings.Split(*turnURL, ",") {
+		if u = strings.TrimSpace(u); u != "" {
+			urls = append(urls, u)
+		}
+	}
+	if len(urls) == 0 {
+		return ice
+	}
+	turn := iceServer{URLs: urls, Username: *turnUser, Credential: *turnPass}
+	if *turnSecret != "" {
+		turn.Username = fmt.Sprintf("%d:%s", time.Now().Add(*turnTTL).Unix(), id)
+		mac := hmac.New(sha1.New, []byte(*turnSecret))
+		mac.Write([]byte(turn.Username))
+		turn.Credential = base64.StdEncoding.EncodeToString(mac.Sum(nil))
+	}
+	return append(ice, turn)
 }
 
 type peerInfo struct {
@@ -250,37 +272,6 @@ func (h *hub) drop(c *client) {
 	close(c.send)
 }
 
-// allowAttempt reports whether ip may try another join code. Caller must hold h.mu.
-func (h *hub) allowAttempt(ip string) bool {
-	f := h.fails[ip]
-	if f == nil || time.Since(f.start) > failureWindow {
-		return true
-	}
-	return f.count < maxFailures
-}
-
-// Caller must hold h.mu.
-func (h *hub) recordFailure(ip string) {
-	f := h.fails[ip]
-	if f == nil || time.Since(f.start) > failureWindow {
-		f = &failWindow{start: time.Now()}
-		h.fails[ip] = f
-	}
-	f.count++
-}
-
-func (h *hub) pruneFailures() {
-	for range time.Tick(time.Minute) {
-		h.mu.Lock()
-		for ip, f := range h.fails {
-			if time.Since(f.start) > failureWindow {
-				delete(h.fails, ip)
-			}
-		}
-		h.mu.Unlock()
-	}
-}
-
 type inbound struct {
 	T    string          `json:"t"`
 	Code string          `json:"code"`
@@ -297,10 +288,6 @@ func (h *hub) handle(c *client, msg inbound) {
 	}
 	switch msg.T {
 	case "join":
-		if !h.allowAttempt(c.ip) {
-			h.sendTo(c, map[string]any{"t": "join-error", "msg": "Too many wrong codes. Wait a few minutes and try again."})
-			return
-		}
 		code := strings.TrimSpace(msg.Code)
 		r, ok := h.codes[code]
 		if ok {
@@ -308,7 +295,6 @@ func (h *hub) handle(c *client, msg inbound) {
 			ok = (code == r.code && now.Before(r.exp)) || (code == r.prevCode && now.Before(r.prevExp))
 		}
 		if !ok {
-			h.recordFailure(c.ip)
 			h.sendTo(c, map[string]any{"t": "join-error", "msg": "That code doesn't match an open session. Check the other screen for the current code."})
 			return
 		}
@@ -323,6 +309,7 @@ func (h *hub) handle(c *client, msg inbound) {
 		h.addToRoom(c, r)
 		h.sendTo(c, map[string]any{
 			"t": "joined", "room": r.id, "code": r.code, "left": time.Until(r.exp).Milliseconds(), "peers": h.peersOf(c),
+			"ice": iceFor(c.id),
 		})
 	case "name":
 		if name := cleanName(msg.Name); name != "" {
@@ -349,19 +336,6 @@ func cleanName(s string) string {
 
 var upgrader = websocket.Upgrader{ReadBufferSize: 4096, WriteBufferSize: 4096}
 
-func clientIP(r *http.Request) string {
-	if *behindProxy {
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			return strings.TrimSpace(strings.Split(xff, ",")[0])
-		}
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
-
 func (h *hub) serveWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -376,7 +350,7 @@ func (h *hub) serveWS(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = "A device"
 	}
-	c := &client{id: id, name: name, ip: clientIP(r), conn: conn, send: make(chan []byte, 256)}
+	c := &client{id: id, name: name, conn: conn, send: make(chan []byte, 256)}
 
 	h.mu.Lock()
 	if old, ok := h.clients[id]; ok {
@@ -390,7 +364,7 @@ func (h *hub) serveWS(w http.ResponseWriter, r *http.Request) {
 	h.addToRoom(c, rm)
 	h.sendTo(c, map[string]any{
 		"t": "hello", "id": c.id, "room": rm.id, "code": rm.code, "left": time.Until(rm.exp).Milliseconds(),
-		"peers": h.peersOf(c), "ice": h.ice, "lan": lanAddrs(), "origin": strings.TrimRight(*publicURL, "/"),
+		"peers": h.peersOf(c), "ice": iceFor(c.id), "lan": lanAddrs(), "origin": strings.TrimRight(*publicURL, "/"),
 		"ttl": codeTTL.Milliseconds(),
 	})
 	h.mu.Unlock()
@@ -555,16 +529,7 @@ func main() {
 		rooms:   map[string]*room{},
 		codes:   map[string]*room{},
 		clients: map[string]*client{},
-		fails:   map[string]*failWindow{},
-		ice:     []iceServer{},
 	}
-	if *stunURL != "" {
-		h.ice = append(h.ice, iceServer{URLs: []string{*stunURL}})
-	}
-	if *turnURL != "" {
-		h.ice = append(h.ice, iceServer{URLs: []string{*turnURL}, Username: *turnUser, Credential: *turnPass})
-	}
-	go h.pruneFailures()
 
 	static, err := fs.Sub(webFS, "web")
 	if err != nil {

@@ -76,7 +76,8 @@ function toast(msg) {
   el.textContent = msg;
   el.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 2400);
+  // Long messages stay up long enough to read.
+  toastTimer = setTimeout(() => el.classList.remove('show'), Math.max(2400, msg.length * 60));
 }
 
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
@@ -233,6 +234,7 @@ function onServer(m) {
       break;
     case 'joined':
       state.room = m.room;
+      state.ice = m.ice || state.ice;
       state.pendingJoin = null;
       store.set('room', state.room);
       for (const p of [...peers.values()]) closePeer(p);

@@ -10,8 +10,7 @@ services:
       QRCPY_PUBLIC_URL: ${QRCPY_PUBLIC_URL:-}
       # Optional TURN relay for devices on networks that block direct connections.
       QRCPY_TURN: ${QRCPY_TURN:-}
-      QRCPY_TURN_USER: ${QRCPY_TURN_USER:-}
-      QRCPY_TURN_PASS: ${QRCPY_TURN_PASS:-}
+      QRCPY_TURN_SECRET: ${QRCPY_TURN_SECRET:-}
     restart: unless-stopped
     read_only: true
     cap_drop:
